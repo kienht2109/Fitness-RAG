@@ -1,12 +1,20 @@
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, ConfigDict, StringConstraints
+
+from app.agent.orchestrator import AgentService, get_agent_service
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 class AgentQueryRequest(BaseModel):
-    user_id: str = Field(min_length=1)
-    question: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+    ]
 
 
 class AgentQueryResponse(BaseModel):
@@ -15,8 +23,12 @@ class AgentQueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=AgentQueryResponse)
-async def query_agent(_: AgentQueryRequest) -> AgentQueryResponse:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="The coach-assist agent has not been implemented yet.",
+async def query_agent(
+    request: AgentQueryRequest,
+    service: Annotated[AgentService, Depends(get_agent_service)],
+) -> AgentQueryResponse:
+    result = await service.query(
+        user_id=request.user_id,
+        question=request.question,
     )
+    return AgentQueryResponse(answer=result.answer, tools_used=result.tools_used)

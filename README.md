@@ -4,8 +4,8 @@ An AI-assisted fitness service built around a grounded knowledge RAG pipeline,
 workout-history analysis, and a tool-calling coach agent. The API uses FastAPI,
 LangChain's OpenAI integrations, and a persistent Chroma vector database.
 
-> Status: Fitness RAG and workout-history analysis are implemented. Agent orchestration and the
-> full evaluation pipeline are still to come.
+> Status: Fitness RAG, workout-history analysis, and coach-assist orchestration are implemented.
+> The full evaluation pipeline is still to come.
 
 ## Architecture
 
@@ -83,7 +83,7 @@ For local execution outside Docker, set `CHROMA_HOST=localhost` and
 | `GET` | `/ready` | Chroma connectivity | Implemented |
 | `POST` | `/rag/query` | Grounded fitness knowledge query | Implemented |
 | `POST` | `/analysis/query` | Workout-history insight | Implemented |
-| `POST` | `/agent/query` | Tool-calling coach assistant | Contract only (`501`) |
+| `POST` | `/agent/query` | Tool-calling coach assistant | Implemented |
 
 Request and response schemas are visible in Swagger UI. Remaining feature behavior
 will follow the contracts in [PLAN.md](PLAN.md).
@@ -121,6 +121,26 @@ response without calling the model.
   "question": "How is my bench press progressing?"
 }
 ```
+
+### Coach Assist Agent
+
+`POST /agent/query` accepts the same authoritative `user_id` plus a coaching question. The agent
+model receives two OpenAI function-calling tools: `rag_search` for grounded fitness knowledge and
+`analyze_history` for the selected user's deterministic workout summary. It may call either or both
+tools, including multiple calls, before returning one answer. Tool handlers call the underlying
+Python services directly rather than making internal HTTP requests.
+
+```json
+{
+  "user_id": "user_a",
+  "question": "Based on my recent bench progress, how should I apply progressive overload?"
+}
+```
+
+The response includes the final answer and the tool names used. Personal observations are sourced
+from workout-history analysis; general recommendations retain the RAG chunk citations returned by
+the knowledge tool. Empty or failed tool results are passed back to the model so it can try another
+tool or state the limitation instead of fabricating evidence.
 
 ## Configuration
 
@@ -171,8 +191,22 @@ data/
   analysis, and agent implementations do not instantiate provider clients ad hoc.
 - Medical diagnosis and eating-disorder-risk requests are intercepted before
   retrieval and generation with fixed supportive refusals.
-- Agent tool arguments will be validated and tool calls bounded by
-  `AGENT_MAX_ITERATIONS`.
+- Agent tool arguments are validated with strict schemas. In particular, `analyze_history` rejects
+  a model-supplied `user_id` that differs from the API request's authoritative user. Tool calls are
+  bounded by `AGENT_MAX_ITERATIONS`.
+
+### Agent Extensibility And Failure Modes
+
+- If the model calls an unhelpful tool first, its result is appended as a tool observation. The
+  model can then call a different or additional tool on the next iteration; there is no fixed tool
+  sequence.
+- Adding a third tool requires registering its schema and handler in `app/agent/tools.py`. The
+  orchestration loop dispatches registered calls generically and does not need a tool-specific
+  branch.
+- The largest production risks are hallucinated tool arguments and repeated tool calls that raise
+  latency and cost. Strict Pydantic argument validation, authoritative user-ID matching, and the
+  iteration cap mitigate those risks. Production telemetry should additionally track tool errors,
+  loop depth, token usage, and per-request cost.
 
 ## Documentation Roadmap
 
