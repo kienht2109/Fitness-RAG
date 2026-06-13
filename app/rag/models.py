@@ -34,3 +34,16 @@ class IngestionReport:
     source_files: int
     chunks_upserted: int
     stale_chunks_deleted: int
+
+
+@dataclass(frozen=True)
+class RetrievalSource:
+    source_file: str
+    section_title: str
+    chunk_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    answer: str
+    sources: list[RetrievalSource]

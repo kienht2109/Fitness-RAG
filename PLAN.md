@@ -24,13 +24,14 @@ via **FastAPI** and runs locally via
     ai.py            - shared LangChain OpenAI chat + embedding factories
     chroma.py        - shared Chroma HTTP client factory
   /rag
-    models.py        - ingestion data models
+    models.py        - ingestion and retrieval data models
     documents.py     - knowledge-base file discovery
     tokenization.py  - embedding-model token counting and hard splits
     chunking.py      - header-aware Markdown chunk construction
     vector_store.py  - LangChain Chroma creation, upserts, stale cleanup
     ingest.py        - ingestion orchestration + CLI
-    retrieve.py       - top-k retrieval + grounded prompt construction
+    prompting.py     - grounded prompt, context formatting, answer chain
+    retrieve.py      - top-k retrieval and response orchestration
     guardrails.py     - out-of-scope + medical/ED refusal classifier
   /analysis
     processing.py     - trend detection, volume aggregation, neglected-exercise logic
@@ -88,11 +89,17 @@ PLAN.md
 - Flow: embed query -> top-k similarity search in Chroma -> build a grounded
   prompt that instructs the LLM to answer ONLY from provided context and to
   cite which chunk(s) it used -> call OpenAI -> return `{ answer, sources: [...] }`
-  where each source includes `source_file` and `section_title`.
+  where each source includes `source_file`, `section_title`, and `chunk_id`.
+- Build the response source list deterministically from retrieved document
+  metadata rather than trusting model-generated attribution. Treat retrieved text
+  as untrusted data in the prompt and ignore instructions found inside it.
+- If no chunks are returned, skip chat generation and return a fixed
+  insufficient-context response.
 - Out-of-scope handling: before retrieval, run a lightweight classification step
   (LLM call or rule-based topic check) to detect non-fitness queries (e.g. "what's
   the weather"). If out-of-scope, skip retrieval and return a polite message
-  stating the assistant only handles fitness/training questions.
+  stating the assistant only handles fitness/training questions. This check is
+  implemented with the guardrails stage after the retrieval core.
 
 ### Guardrails (`rag/guardrails.py`)
 - Runs as a pre-check before the RAG flow generates an answer.

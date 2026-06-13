@@ -1,11 +1,15 @@
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, StringConstraints
+
+from app.rag.retrieve import RetrievalService, get_retrieval_service
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 
 
 class RagQueryRequest(BaseModel):
-    question: str = Field(min_length=1)
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 class RagSource(BaseModel):
@@ -20,8 +24,12 @@ class RagQueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=RagQueryResponse)
-async def query_rag(_: RagQueryRequest) -> RagQueryResponse:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="The RAG pipeline has not been implemented yet.",
+async def query_rag(
+    request: RagQueryRequest,
+    service: Annotated[RetrievalService, Depends(get_retrieval_service)],
+) -> RagQueryResponse:
+    result = await service.query(request.question)
+    return RagQueryResponse(
+        answer=result.answer,
+        sources=[RagSource(**source.__dict__) for source in result.sources],
     )
