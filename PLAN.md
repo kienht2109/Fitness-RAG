@@ -3,12 +3,14 @@
 ## Overview
 Build an AI Workout Coach with four components: a fitness RAG pipeline, a workout
 history analysis endpoint, a coach-assist agent that orchestrates both, and an
-evaluation pipeline. All LLM calls use the **OpenAI API**. Vector storage uses
-**Chroma**. The service is exposed via **FastAPI** and runs locally via
+evaluation pipeline. Model, embedding, retrieval, and vector-store integrations
+use **LangChain** with the **OpenAI API** and **Chroma**. The service is exposed
+via **FastAPI** and runs locally via
 `docker compose up`.
 
 ## Tech Stack
 - Language: Python, FastAPI
+- AI framework: LangChain (`langchain-openai`, `langchain-chroma`)
 - LLM: OpenAI (e.g. `gpt-4o-mini` for retrieval/analysis generation, `gpt-4o` for
   agent orchestration and LLM-judge evaluation) — model names configurable via env vars
 - Embeddings: OpenAI `text-embedding-3-small`
@@ -18,8 +20,16 @@ evaluation pipeline. All LLM calls use the **OpenAI API**. Vector storage uses
 ## Repository Structure
 ```
 /app
+  /core
+    ai.py            - shared LangChain OpenAI chat + embedding factories
+    chroma.py        - shared Chroma HTTP client factory
   /rag
-    ingest.py        - load + chunk markdown docs, embed, store in Chroma
+    models.py        - ingestion data models
+    documents.py     - knowledge-base file discovery
+    tokenization.py  - embedding-model token counting and hard splits
+    chunking.py      - header-aware Markdown chunk construction
+    vector_store.py  - LangChain Chroma creation, upserts, stale cleanup
+    ingest.py        - ingestion orchestration + CLI
     retrieve.py       - top-k retrieval + grounded prompt construction
     guardrails.py     - out-of-scope + medical/ED refusal classifier
   /analysis
@@ -52,10 +62,24 @@ PLAN.md
 
 ### Ingestion (`rag/ingest.py`)
 - Load all markdown files from `/data/knowledge_base`.
-- Chunk header-aware: split on `##`/`###` boundaries, target ~300-500 tokens per
-  chunk with slight overlap so context isn't cut mid-explanation.
-- Embed each chunk with `text-embedding-3-small`.
-- Store in Chroma with metadata: `source_file`, `section_title`, `chunk_id`.
+- Chunk header-aware: treat `##` sections as semantic units, split oversized
+  sections at `###` or paragraph boundaries, and balance adjacent short sections
+  into chunks targeting ~300 tokens (120-token soft minimum, 450-token hard
+  maximum). Add token overlap only when a single atomic text block must be split;
+  natural heading boundaries do not need overlap and avoiding it reduces duplicate
+  retrieval results.
+- Embed each chunk through LangChain `OpenAIEmbeddings`, configured with
+  `text-embedding-3-small` by default.
+- Store in Chroma with deterministic `chunk_id` values and metadata:
+  `source_file`, `document_title`, `section_title`, `section_titles`,
+  `primary_section_title`, `section_path`, `section_paths`, `chunk_index`,
+  `token_count`, `embedding_model`, source/content hashes, and the ingestion
+  owner marker. Multi-value metadata is JSON-encoded so it remains compatible
+  with Chroma's scalar metadata values.
+- Make ingestion idempotent with upserts and remove stale chunks previously owned
+  by this ingestion pipeline after a successful embedding/upsert pass.
+- Use the same shared LangChain provider factories for retrieval query embeddings,
+  RAG chat generation, analysis generation, and agent model calls.
 - If supplementing the knowledge base with extra docs, place them in the same
   folder and note the addition + rationale in README.
 

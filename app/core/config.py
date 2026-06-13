@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     chroma_collection: str = "fitness_knowledge"
 
     rag_top_k: int = Field(default=5, ge=1, le=50)
+    rag_chunk_min_tokens: int = Field(default=120, ge=1)
+    rag_chunk_target_tokens: int = Field(default=300, ge=1)
+    rag_chunk_max_tokens: int = Field(default=450, ge=1)
+    rag_chunk_overlap_tokens: int = Field(default=40, ge=0)
+    rag_embedding_batch_size: int = Field(default=64, ge=1, le=2048)
     agent_max_iterations: int = Field(default=5, ge=1, le=20)
     knowledge_base_dir: Path = Path("data/knowledge_base")
     sample_workouts_path: Path = Path("data/workout-history.json")

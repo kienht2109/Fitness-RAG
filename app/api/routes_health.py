@@ -1,10 +1,10 @@
 from typing import Literal
 
-import chromadb
 from anyio import to_thread
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from app.core.chroma import create_chroma_client
 from app.core.config import get_settings
 
 router = APIRouter(tags=["health"])
@@ -16,14 +16,7 @@ class HealthResponse(BaseModel):
 
 def check_chroma() -> None:
     settings = get_settings()
-    client = chromadb.HttpClient(
-        host=settings.chroma_host,
-        port=settings.chroma_port,
-        ssl=settings.chroma_ssl,
-        tenant=settings.chroma_tenant,
-        database=settings.chroma_database,
-    )
-    client.heartbeat()
+    create_chroma_client(settings).heartbeat()
 
 
 @router.get("/health", response_model=HealthResponse, summary="Liveness check")

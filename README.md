@@ -2,10 +2,10 @@
 
 An AI-assisted fitness service built around a grounded knowledge RAG pipeline,
 workout-history analysis, and a tool-calling coach agent. The API uses FastAPI,
-OpenAI models, and a persistent Chroma vector database.
+LangChain's OpenAI integrations, and a persistent Chroma vector database.
 
-> Status: initial infrastructure skeleton. Health endpoints and OpenAPI contracts
-> are available; the RAG, analysis, agent, and evaluation implementations are next.
+> Status: initial infrastructure plus Fitness RAG ingestion. Retrieval, guardrails,
+> workout analysis, agent orchestration, and evaluation are still to come.
 
 ## Architecture
 
@@ -34,8 +34,10 @@ The Compose stack contains:
 - `chroma`: Chroma on <http://localhost:8001>, persisted in a named volume
 
 Inside the Docker network, the app reaches Chroma at `http://chroma:8000`.
-The app uses Chroma's lightweight HTTP client because embeddings are generated
-through OpenAI rather than inside the API container.
+`langchain-openai` provides the shared chat and embedding interfaces, while
+`langchain-chroma` provides ingestion and future retrieval over the remote Chroma
+service. The Chroma integration requires the full `chromadb` Python package even
+though the application only connects to the separate server over HTTP.
 
 ## Quick Start
 
@@ -101,6 +103,11 @@ Copy `.env.example` to `.env`; never commit real credentials.
 | `CHROMA_EXPOSED_PORT` | `8001` | Chroma port exposed on the host |
 | `CHROMA_COLLECTION` | `fitness_knowledge` | Fitness document collection |
 | `RAG_TOP_K` | `5` | Number of chunks retrieved per query |
+| `RAG_CHUNK_MIN_TOKENS` | `120` | Soft lower bound used when balancing chunks |
+| `RAG_CHUNK_TARGET_TOKENS` | `300` | Preferred chunk size |
+| `RAG_CHUNK_MAX_TOKENS` | `450` | Hard chunk size ceiling |
+| `RAG_CHUNK_OVERLAP_TOKENS` | `40` | Overlap for forced token-level splits only |
+| `RAG_EMBEDDING_BATCH_SIZE` | `64` | OpenAI embedding and Chroma upsert batch size |
 | `AGENT_MAX_ITERATIONS` | `5` | Tool-loop safety limit |
 
 See [.env.example](.env.example) for the complete starter configuration.
@@ -110,8 +117,8 @@ See [.env.example](.env.example) for the complete starter configuration.
 ```text
 app/
   api/          FastAPI application and route modules
-  core/         Environment-backed settings and shared infrastructure
-  rag/          Ingestion, retrieval, and safety guardrails
+  core/         Settings and shared LangChain model providers
+  rag/          Chunking, ingestion, retrieval, and safety guardrails
   analysis/     Deterministic workout processing and LLM insights
   agent/        Tool definitions and orchestration loop
   eval/         Test cases, metrics, and evaluation runner
@@ -126,6 +133,8 @@ data/
   numeric summary; raw history is not sent to the model.
 - RAG answers will be constrained to retrieved context and include source
   metadata.
+- OpenAI chat and embedding calls use shared LangChain factories so retrieval,
+  analysis, and agent implementations do not instantiate provider clients ad hoc.
 - Medical diagnosis and eating-disorder-risk requests will be intercepted before
   generation with a supportive, non-diagnostic refusal.
 - Agent tool arguments will be validated and tool calls bounded by
