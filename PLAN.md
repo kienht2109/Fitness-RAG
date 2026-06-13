@@ -50,8 +50,8 @@ via **FastAPI** and runs locally via
     metrics.py        - rule-based + LLM-judge metrics
     run_eval.py        - runner, outputs results
 /data
-  knowledge_base/      - provided markdown docs (+ any supplemental docs, documented)
-  sample_workouts.json - provided sample workout history
+  knowledge_base/       - provided markdown docs (+ any supplemental docs, documented)
+  workout-history.json - current users and workout-history data source
 docker-compose.yml
 .env.example
 README.md
@@ -172,10 +172,10 @@ Pure-Python functions, no LLM involved, run before any prompt is built:
   inconsistent progression (fluctuating weights/reps without a clear trend).
 
 ### Insight generation (`analysis/insight.py`)
-- Endpoint: `POST /analysis/query` — input: `{ "user_id": str, "history": [...],
-  "question": str }`.
-- Flow: classify question intent (trend / neglect / balance / plan-suggestion) ->
-  normalize units across the full history -> run the relevant processing
+- Endpoint: `POST /analysis/query` — input: `{ "user_id": str, "question": str }`.
+- Flow: load and validate the configured workout-history JSON -> select only the
+  requested user's workouts -> classify question intent (trend / neglect / balance /
+  plan-suggestion) -> normalize units across that user's full history -> run the relevant processing
   function(s) -> build a structured, numeric summary (dates, normalized weights,
   percentages, deltas, flags for deload/bodyweight/gap periods) -> pass ONLY this
   summary (never raw JSON) to the LLM -> LLM produces a natural-language insight
@@ -197,8 +197,8 @@ Pure-Python functions, no LLM involved, run before any prompt is built:
     decline.
   - Sparse/gapped data (skipped weeks) -> handled without producing misleading
     trend conclusions; gaps can be mentioned as a relevant observation.
-- **Data isolation**: workout history is scoped strictly to the `user_id` provided
-  in the request; no cross-user data access at any layer. Include a test that
+- **Data isolation**: workout history is selected from the JSON source and scoped strictly to the
+  `user_id` provided in the request; callers cannot submit or override workout history. Include a test that
   confirms requesting analysis for User A cannot surface User B's data even under
   adversarial input (e.g. user_id mismatch, crafted questions referencing another
   user).

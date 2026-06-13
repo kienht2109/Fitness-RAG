@@ -104,16 +104,23 @@ guardrails run before similarity search and answer generation.
 
 ### Workout History Analysis
 
-`POST /analysis/query` accepts a `user_id`, a workout `history` list, and a question. Each workout
-contains an ISO date, exercise name, and sets with `reps`, `weight`, and a `kg` or `lb` unit. The
-request history is supplied directly by the caller; the service does not load workout JSON from
-disk or access another user's records.
+`POST /analysis/query` accepts a `user_id` and a question. The service reads the current
+`WORKOUT_HISTORY_PATH` JSON file, validates its user/workout/set structure, and selects only the
+requested user's history. The file is read for each lookup so updates become visible without
+restarting the API. Unknown users return `404`; an unreadable or invalid data source returns `503`.
 
 Weights are normalized to kilograms before deterministic aggregation and trend detection. The
 service classifies the question as trend, neglect, balance, or plan-suggestion intent and builds a
 compact numeric summary. Only that summary is sent to the analysis model through a structured
 prompt; raw workout sets are never included. Empty history returns a fixed insufficient-data
 response without calling the model.
+
+```json
+{
+  "user_id": "user_a",
+  "question": "How is my bench press progressing?"
+}
+```
 
 ## Configuration
 
@@ -136,6 +143,7 @@ Copy `.env.example` to `.env`; never commit real credentials.
 | `RAG_CHUNK_OVERLAP_TOKENS` | `40` | Overlap for forced token-level splits only |
 | `RAG_EMBEDDING_BATCH_SIZE` | `64` | OpenAI embedding and Chroma upsert batch size |
 | `AGENT_MAX_ITERATIONS` | `5` | Tool-loop safety limit |
+| `WORKOUT_HISTORY_PATH` | `data/workout-history.json` | JSON source for users and workouts |
 
 See [.env.example](.env.example) for the complete starter configuration.
 

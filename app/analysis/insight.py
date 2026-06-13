@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
+from anyio import to_thread
 from langchain_core.runnables import Runnable
 
+from app.analysis.history import JsonWorkoutHistoryRepository, WorkoutHistoryRepository
 from app.analysis.models import AnalysisInsight
 from app.analysis.prompting import build_insight_chain
 from app.analysis.summary import build_analysis_summary
@@ -25,14 +27,18 @@ class AnalysisResult:
 
 
 class AnalysisService:
-    def __init__(self, insight_chain: Runnable[Any, AnalysisInsight]) -> None:
+    def __init__(
+        self,
+        history_repository: WorkoutHistoryRepository,
+        insight_chain: Runnable[Any, AnalysisInsight],
+    ) -> None:
+        self.history_repository = history_repository
         self.insight_chain = insight_chain
 
     async def query(
         self,
         *,
         user_id: str,
-        history: list[dict[str, Any]],
         question: str,
     ) -> AnalysisResult:
         normalized_user_id = user_id.strip()
@@ -41,10 +47,19 @@ class AnalysisService:
             raise ValueError("user_id must not be empty")
         if not normalized_question:
             raise ValueError("Question must not be empty")
+        user = await to_thread.run_sync(
+            lambda: self.history_repository.get_user(normalized_user_id)
+        )
+        history = [workout.model_dump(mode="json") for workout in user.workouts]
         if not history:
             return AnalysisResult(insight=NOT_ENOUGH_HISTORY_INSIGHT, summary={})
 
         intent, summary = build_analysis_summary(history, normalized_question)
+        summary["user"] = {
+            "user_id": normalized_user_id,
+            "name": user.name,
+            "profile": user.profile,
+        }
         generated = await self.insight_chain.ainvoke(
             {
                 "user_id": normalized_user_id,
@@ -64,7 +79,10 @@ class AnalysisService:
 def create_analysis_service(settings: Settings | None = None) -> AnalysisService:
     settings = settings or get_settings()
     chat_model = create_chat_model(settings)
-    return AnalysisService(build_insight_chain(chat_model))
+    return AnalysisService(
+        JsonWorkoutHistoryRepository(settings.workout_history_path),
+        build_insight_chain(chat_model),
+    )
 
 
 @lru_cache

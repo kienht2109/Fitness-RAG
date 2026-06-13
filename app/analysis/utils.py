@@ -50,14 +50,10 @@ def linear_regression(x_values: list[int], y_values: list[float]) -> tuple[float
 
     slope = covariance / x_variance
 
-    predicted = [
-        y_mean + slope * (x_value - x_mean)
-        for x_value in x_values
-    ]
+    predicted = [y_mean + slope * (x_value - x_mean) for x_value in x_values]
 
     residual_sum = sum(
-        (actual - estimate) ** 2
-        for actual, estimate in zip(y_values, predicted, strict=True)
+        (actual - estimate) ** 2 for actual, estimate in zip(y_values, predicted, strict=True)
     )
 
     total_sum = sum((value - y_mean) ** 2 for value in y_values)

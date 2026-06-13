@@ -24,6 +24,22 @@ class WorkoutRecord(BaseModel):
     sets: list[WorkoutSetRecord]
 
 
+class UserWorkoutHistory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: NonEmptyString
+    profile: NonEmptyString
+    workouts: list[WorkoutRecord]
+
+
+class WorkoutHistoryDataset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: NonEmptyString
+    users: dict[str, UserWorkoutHistory]
+    edge_cases_notes: list[NonEmptyString] = Field(default_factory=list)
+
+
 class AnalysisInsight(BaseModel):
     insight: str = Field(
         min_length=1,
