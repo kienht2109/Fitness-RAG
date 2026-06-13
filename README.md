@@ -142,6 +142,10 @@ from workout-history analysis; general recommendations retain the RAG chunk cita
 the knowledge tool. Empty or failed tool results are passed back to the model so it can try another
 tool or state the limitation instead of fabricating evidence.
 
+The same scope, medical-diagnosis, and eating-disorder guardrails used by RAG run before the agent
+model or any tool. Blocked requests return the fixed supportive response with an empty
+`tools_used` list. The RAG tool retains its own guardrail as a defense-in-depth check.
+
 ## Configuration
 
 Configuration is read from environment variables through `pydantic-settings`.

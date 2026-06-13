@@ -3,13 +3,16 @@ from typing import Any, Sequence
 import anyio
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda
 
 from app.agent.models import AgentResult, ToolExecution
 from app.agent.orchestrator import AgentService, MAX_ITERATIONS_ANSWER, get_agent_service
 from app.agent.tools import ANALYZE_HISTORY, RAG_SEARCH, TOOL_SCHEMAS, CoachToolRegistry
 from app.analysis.insight import AnalysisResult
 from app.api.main import app
-from app.rag.models import RetrievalResult, RetrievalSource
+from app.rag.guardrail_prompting import GuardrailClassification
+from app.rag.guardrails import MEDICAL_RESPONSE, GuardrailService
+from app.rag.models import GuardrailCategory, RetrievalResult, RetrievalSource
 
 
 class SequencedAgentModel:
@@ -217,6 +220,40 @@ def test_agent_stops_at_the_iteration_limit() -> None:
     assert result.answer == MAX_ITERATIONS_ANSWER
     assert result.tools_used == [RAG_SEARCH]
     assert retrieval.queries == ["bench", "bench again"]
+
+
+def test_agent_endpoint_guardrail_blocks_before_model_or_tools_run() -> None:
+    def fail_if_model_called(_: Any) -> AIMessage:
+        raise AssertionError("The agent model must not run for a blocked request")
+
+    def classify(_: Any) -> GuardrailClassification:
+        return GuardrailClassification(category=GuardrailCategory.MEDICAL)
+
+    retrieval = FakeRetrievalService()
+    analysis = FakeAnalysisService()
+    service = AgentService(
+        RunnableLambda(fail_if_model_called),
+        CoachToolRegistry(retrieval, analysis),
+        max_iterations=3,
+        guardrails=GuardrailService(RunnableLambda(classify)),
+    )
+    app.dependency_overrides[get_agent_service] = lambda: service
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/agent/query",
+            json={
+                "user_id": "user_a",
+                "question": "Can you assess whether my movement indicates an injury?",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"answer": MEDICAL_RESPONSE, "tools_used": []}
+    assert retrieval.queries == []
+    assert analysis.queries == []
 
 
 class FakeAgentService:

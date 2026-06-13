@@ -14,6 +14,7 @@ from app.agent.tools import CoachToolRegistry
 from app.analysis.insight import create_analysis_service
 from app.core.ai import create_chat_model
 from app.core.config import Settings, get_settings
+from app.rag.guardrails import GuardrailService, create_guardrail_service
 from app.rag.retrieve import create_retrieval_service
 
 MAX_ITERATIONS_ANSWER = (
@@ -33,10 +34,12 @@ class AgentService:
         agent_model: AgentModel,
         tool_registry: CoachToolRegistry,
         max_iterations: int,
+        guardrails: GuardrailService | None = None,
     ) -> None:
         self.agent_model = agent_model
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
+        self.guardrails = guardrails
 
     async def query(self, *, user_id: str, question: str) -> AgentResult:
         normalized_user_id = user_id.strip()
@@ -45,6 +48,11 @@ class AgentService:
             raise ValueError("user_id must not be empty")
         if not normalized_question:
             raise ValueError("Question must not be empty")
+
+        if self.guardrails is not None:
+            decision = await self.guardrails.evaluate(normalized_question)
+            if decision.blocked:
+                return AgentResult(answer=decision.response or "", tools_used=[])
 
         messages: list[BaseMessage] = build_initial_messages(
             user_id=normalized_user_id,
@@ -110,6 +118,7 @@ def _message_text(message: AIMessage) -> str:
 
 def create_agent_service(settings: Settings | None = None) -> AgentService:
     settings = settings or get_settings()
+    shared_chat_model = create_chat_model(settings)
     tool_registry = CoachToolRegistry(
         retrieval_service=create_retrieval_service(settings),
         analysis_service=create_analysis_service(settings),
@@ -124,6 +133,7 @@ def create_agent_service(settings: Settings | None = None) -> AgentService:
         agent_model=agent_model,
         tool_registry=tool_registry,
         max_iterations=settings.agent_max_iterations,
+        guardrails=create_guardrail_service(shared_chat_model),
     )
 
 
