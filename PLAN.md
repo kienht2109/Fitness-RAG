@@ -129,23 +129,58 @@ PLAN.md
 
 ### Data processing (`analysis/processing.py`)
 Pure-Python functions, no LLM involved, run before any prompt is built:
+- **Unit normalization**: every entry's `unit` field (`kg`/`lb`) is normalized to
+  a single canonical unit (kg) before any aggregation, trend, or comparison
+  calculation runs. This must handle a single user mixing units across sessions,
+  and a user switching units partway through their history (e.g. lb -> kg around
+  late February) — all downstream stats operate on normalized values, and the
+  original unit is preserved only for display/reference if needed.
 - **Trend detection**: per exercise, compute estimated 1RM or top-set weight over
-  time, linear trend (slope), percent change over the requested window.
-- **Volume aggregation**: total volume (sets x reps x weight) per exercise and per
-  muscle group, using a small exercise -> muscle-group lookup table.
-- **Neglected exercises**: detect exercises/muscle groups with low frequency or
-  long gaps since last performed.
-- **Overtraining ratio**: compare volume between muscle groups (e.g. chest vs
-  back) over a time window.
+  time (on normalized weights), linear trend (slope), percent change over the
+  requested window. Must distinguish a genuine plateau/regression from an artifact
+  of unnormalized unit mixing.
+- **Deload detection**: identify short windows (e.g. a few consecutive days/week)
+  where working weights or volume drop sharply relative to the surrounding trend,
+  then recover — flag these as likely deload weeks rather than regressions or
+  data errors, and exclude/annotate them separately in trend summaries so they
+  don't skew slope calculations.
+- **Zero-weight / bodyweight entries**: entries with `weight: 0` (e.g. bodyweight
+  pull-ups) are valid and must not be treated as missing data, divide-by-zero
+  errors, or excluded from volume/frequency counts. Track these separately (e.g.
+  rep-based progression) since weight-based trend metrics don't apply.
+- **Volume aggregation**: total volume (sets x reps x normalized weight) per
+  exercise and per muscle group, using a small exercise -> muscle-group lookup
+  table. Bodyweight entries contribute to frequency/rep-volume tracking even
+  though they contribute 0 to weight-based volume.
+- **Neglected / missing exercises**: detect exercises or muscle groups with low
+  frequency (e.g. an exercise performed only 2-3 times in 3 months) or entirely
+  absent from the history (e.g. no deadlift entries at all) — both cases should be
+  surfaced, distinguishing "rarely trained" from "never trained" and identifying
+  the affected movement pattern (e.g. posterior chain).
+- **Overtraining / imbalance ratio**: compare training frequency and volume
+  between muscle groups (e.g. chest vs back) over a time window, and flag clear
+  imbalances (e.g. one muscle group trained almost every session while an
+  antagonist is rarely or never trained).
+- **Sparse data / gap handling**: when entire weeks have no entries, gaps must not
+  be misread as deloads, regressions, or errors — date-based calculations (trend
+  slope, frequency) should account for actual elapsed time/sessions rather than
+  assuming evenly spaced data, and large gaps can optionally be surfaced as their
+  own observation (e.g. "no training logged for two weeks in February").
+- **Progression structure**: support comparing progression patterns across
+  exercises/users — e.g. distinguishing a clear, structured progressive-overload
+  pattern (steady increases in weight/reps over time) from a less structured or
+  inconsistent progression (fluctuating weights/reps without a clear trend).
 
 ### Insight generation (`analysis/insight.py`)
 - Endpoint: `POST /analysis/query` — input: `{ "user_id": str, "history": [...],
   "question": str }`.
 - Flow: classify question intent (trend / neglect / balance / plan-suggestion) ->
-  run the relevant processing function(s) -> build a structured, numeric summary
-  (dates, weights, percentages, deltas) -> pass ONLY this summary (never raw JSON)
-  to the LLM -> LLM produces a natural-language insight referencing the specific
-  numbers.
+  normalize units across the full history -> run the relevant processing
+  function(s) -> build a structured, numeric summary (dates, normalized weights,
+  percentages, deltas, flags for deload/bodyweight/gap periods) -> pass ONLY this
+  summary (never raw JSON) to the LLM -> LLM produces a natural-language insight
+  referencing the specific numbers and any flagged patterns (deload, imbalance,
+  missing lifts, unit switch, etc.).
 - **Edge cases**:
   - Empty history -> return a clear "not enough data to analyze" message, no LLM
     call needed.
@@ -153,6 +188,15 @@ Pure-Python functions, no LLM involved, run before any prompt is built:
     explicit caveat in the response.
   - Unknown/unrecognized exercise name -> flag it, optionally fuzzy-match to a
     known exercise, and note the assumption.
+  - Mixed/changed units within a single exercise's history -> normalized
+    transparently; if the question is about raw numbers the response should still
+    communicate in a consistent unit and can mention the normalization if relevant.
+  - Zero-weight (bodyweight) entries -> included in frequency/rep analysis, never
+    dropped or treated as errors.
+  - Deload weeks -> recognized and annotated rather than reported as a strength
+    decline.
+  - Sparse/gapped data (skipped weeks) -> handled without producing misleading
+    trend conclusions; gaps can be mentioned as a relevant observation.
 - **Data isolation**: workout history is scoped strictly to the `user_id` provided
   in the request; no cross-user data access at any layer. Include a test that
   confirms requesting analysis for User A cannot surface User B's data even under
