@@ -1,0 +1,54 @@
+services:
+  app:
+    build:
+      context: .
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      OPENAI_AGENT_MODEL: ${OPENAI_AGENT_MODEL:-gpt-4o}
+      OPENAI_JUDGE_MODEL: ${OPENAI_JUDGE_MODEL:-gpt-4o}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_SSL: "false"
+      CHROMA_TENANT: ${CHROMA_TENANT:-default_tenant}
+      CHROMA_DATABASE: ${CHROMA_DATABASE:-default_database}
+      CHROMA_COLLECTION: ${CHROMA_COLLECTION:-fitness_knowledge}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      AGENT_MAX_ITERATIONS: ${AGENT_MAX_ITERATIONS:-5}
+      KNOWLEDGE_BASE_DIR: /app/data/knowledge_base
+      SAMPLE_WORKOUTS_PATH: /app/data/workout-history.json
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      - chroma
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:8000/health', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  chroma:
+    image: ${CHROMA_IMAGE:-chromadb/chroma:1.5.9}
+    ports:
+      - "${CHROMA_EXPOSED_PORT:-8001}:8000"
+    volumes:
+      - chroma_data:/data
+    restart: unless-stopped
+
+volumes:
+  chroma_data:

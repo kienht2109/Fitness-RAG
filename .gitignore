@@ -216,4 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Chroma persistence when running outside the named Docker volume
+.chroma/
+chroma-data/
 data/
