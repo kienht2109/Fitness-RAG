@@ -7,7 +7,9 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
 from app.api.main import app
-from app.rag.models import RetrievalResult, RetrievalSource
+from app.rag.guardrail_prompting import GuardrailClassification
+from app.rag.guardrails import OUT_OF_SCOPE_RESPONSE, GuardrailService
+from app.rag.models import GuardrailCategory, RetrievalResult, RetrievalSource
 from app.rag.retrieve import NO_CONTEXT_ANSWER, RetrievalService, get_retrieval_service
 
 
@@ -88,6 +90,27 @@ def test_retrieval_skips_generation_when_no_context_is_found() -> None:
     result = anyio.run(service.query, "Unknown topic")
 
     assert result == RetrievalResult(answer=NO_CONTEXT_ANSWER, sources=[])
+
+
+def test_retrieval_guardrail_skips_search_and_generation() -> None:
+    def classify(_: Any) -> GuardrailClassification:
+        return GuardrailClassification(category=GuardrailCategory.OUT_OF_SCOPE)
+
+    def fail_if_called(_: Any) -> AIMessage:
+        raise AssertionError("The chat model must not run for a blocked request")
+
+    vector_store = FakeVectorStore([])
+    service = RetrievalService(
+        vector_store,
+        RunnableLambda(fail_if_called),
+        top_k=5,
+        guardrails=GuardrailService(RunnableLambda(classify)),
+    )
+
+    result = anyio.run(service.query, "Explain database indexes")
+
+    assert vector_store.queries == []
+    assert result == RetrievalResult(answer=OUT_OF_SCOPE_RESPONSE, sources=[])
 
 
 class FakeRetrievalService:

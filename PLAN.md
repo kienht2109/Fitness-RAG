@@ -32,7 +32,8 @@ via **FastAPI** and runs locally via
     ingest.py        - ingestion orchestration + CLI
     prompting.py     - grounded prompt, context formatting, answer chain
     retrieve.py      - top-k retrieval and response orchestration
-    guardrails.py     - out-of-scope + medical/ED refusal classifier
+    guardrail_prompting.py - structured intent classifier prompt
+    guardrails.py    - deterministic checks + medical/ED/scope decisions
   /analysis
     processing.py     - trend detection, volume aggregation, neglected-exercise logic
     insight.py        - builds structured summary -> LLM prompt -> insight

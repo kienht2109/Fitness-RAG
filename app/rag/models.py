@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import StrEnum
 
 
 @dataclass(frozen=True)
@@ -47,3 +48,20 @@ class RetrievalSource:
 class RetrievalResult:
     answer: str
     sources: list[RetrievalSource]
+
+
+class GuardrailCategory(StrEnum):
+    ALLOWED = "allowed"
+    OUT_OF_SCOPE = "out_of_scope"
+    MEDICAL = "medical"
+    EATING_DISORDER = "eating_disorder"
+
+
+@dataclass(frozen=True)
+class GuardrailDecision:
+    category: GuardrailCategory
+    response: str | None = None
+
+    @property
+    def blocked(self) -> bool:
+        return self.category is not GuardrailCategory.ALLOWED
