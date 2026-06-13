@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from app.agent.models import AgentResult, ToolExecution
 from app.agent.prompting import build_initial_messages
-from app.agent.tools import TOOL_SCHEMAS, CoachToolRegistry
+from app.agent.tools import CoachToolRegistry
 from app.analysis.insight import create_analysis_service
 from app.core.ai import create_chat_model
 from app.core.config import Settings, get_settings
@@ -61,7 +61,7 @@ class AgentService:
 
             if not response.tool_calls:
                 return AgentResult(
-                    answer=_ensure_attribution(
+                    answer=self.tool_registry.finalize_answer(
                         _message_text(response) or EMPTY_AGENT_ANSWER,
                         observations,
                     ),
@@ -108,43 +108,21 @@ def _message_text(message: AIMessage) -> str:
     return "\n".join(part.strip() for part in parts if part.strip())
 
 
-def _ensure_attribution(answer: str, observations: list[ToolExecution]) -> str:
-    successful = [observation for observation in observations if not observation.is_error]
-    analysis_used = any(observation.name == "analyze_history" for observation in successful)
-    rag_results = [observation for observation in successful if observation.name == "rag_search"]
-    if not analysis_used or not rag_results:
-        return answer
-
-    chunk_ids = list(
-        dict.fromkeys(
-            source.get("chunk_id")
-            for observation in rag_results
-            for source in observation.payload.get("sources", [])
-            if source.get("chunk_id")
-        )
-    )
-    knowledge_source = (
-        ", ".join(f"[{chunk_id}]" for chunk_id in chunk_ids)
-        if chunk_ids
-        else "fitness knowledge tool (no source chunks returned)"
-    )
-    return f"{answer}\n\nSources: workout-history analysis; {knowledge_source}."
-
-
 def create_agent_service(settings: Settings | None = None) -> AgentService:
     settings = settings or get_settings()
+    tool_registry = CoachToolRegistry(
+        retrieval_service=create_retrieval_service(settings),
+        analysis_service=create_analysis_service(settings),
+    )
     chat_model = create_chat_model(settings, model=settings.openai_agent_model)
     agent_model = chat_model.bind_tools(
-        TOOL_SCHEMAS,
+        tool_registry.schemas,
         strict=True,
         parallel_tool_calls=True,
     )
     return AgentService(
         agent_model=agent_model,
-        tool_registry=CoachToolRegistry(
-            retrieval_service=create_retrieval_service(settings),
-            analysis_service=create_analysis_service(settings),
-        ),
+        tool_registry=tool_registry,
         max_iterations=settings.agent_max_iterations,
     )
 

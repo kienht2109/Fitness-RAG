@@ -83,6 +83,10 @@ class CoachToolRegistry:
         self.retrieval_service = retrieval_service
         self.analysis_service = analysis_service
 
+    @property
+    def schemas(self) -> list[dict[str, Any]]:
+        return TOOL_SCHEMAS
+
     async def execute(
         self,
         *,
@@ -104,6 +108,29 @@ class CoachToolRegistry:
             return self._error(name, f"Invalid tool arguments: {details}")
         except Exception:
             return self._error(name, "Tool execution failed and is temporarily unavailable.")
+
+    def finalize_answer(self, answer: str, executions: list[ToolExecution]) -> str:
+        """Apply source attribution owned by the registered tool definitions."""
+        successful = [execution for execution in executions if not execution.is_error]
+        analysis_used = any(execution.name == ANALYZE_HISTORY for execution in successful)
+        rag_results = [execution for execution in successful if execution.name == RAG_SEARCH]
+        if not analysis_used or not rag_results:
+            return answer
+
+        chunk_ids = list(
+            dict.fromkeys(
+                source.get("chunk_id")
+                for execution in rag_results
+                for source in execution.payload.get("sources", [])
+                if source.get("chunk_id")
+            )
+        )
+        knowledge_source = (
+            ", ".join(f"[{chunk_id}]" for chunk_id in chunk_ids)
+            if chunk_ids
+            else "fitness knowledge tool (no source chunks returned)"
+        )
+        return f"{answer}\n\nSources: workout-history analysis; {knowledge_source}."
 
     async def _rag_search(self, arguments: dict[str, Any]) -> ToolExecution:
         validated = RagSearchArguments.model_validate(arguments)

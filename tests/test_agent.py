@@ -4,7 +4,7 @@ import anyio
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from app.agent.models import AgentResult
+from app.agent.models import AgentResult, ToolExecution
 from app.agent.orchestrator import AgentService, MAX_ITERATIONS_ANSWER, get_agent_service
 from app.agent.tools import ANALYZE_HISTORY, RAG_SEARCH, TOOL_SCHEMAS, CoachToolRegistry
 from app.analysis.insight import AnalysisResult
@@ -70,6 +70,37 @@ def test_tool_schemas_are_strict_openai_function_definitions() -> None:
         "user_id",
         "question",
     }
+
+
+def test_tool_registry_owns_schemas_and_cross_tool_attribution() -> None:
+    registry = CoachToolRegistry(FakeRetrievalService(), FakeAnalysisService())
+
+    assert registry.schemas is TOOL_SCHEMAS
+
+    answer = registry.finalize_answer(
+        "Use gradual loading based on your recent trend.",
+        [
+            ToolExecution(
+                name=ANALYZE_HISTORY,
+                content="{}",
+                payload={
+                    "insight": "Bench improved.",
+                    "summary": {"percent_change": 7.1},
+                },
+            ),
+            ToolExecution(
+                name=RAG_SEARCH,
+                content="{}",
+                payload={
+                    "answer": "Add load gradually.",
+                    "sources": [{"chunk_id": "08-progressive-overload.md::0000"}],
+                },
+            ),
+        ],
+    )
+
+    assert "Sources: workout-history analysis" in answer
+    assert "[08-progressive-overload.md::0000]" in answer
 
 
 def test_agent_executes_both_tools_and_returns_one_final_answer() -> None:
