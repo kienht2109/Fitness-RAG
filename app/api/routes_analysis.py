@@ -1,15 +1,20 @@
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, StringConstraints
+
+from app.analysis.insight import AnalysisService, get_analysis_service
+from app.analysis.models import WorkoutRecord
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
 class AnalysisQueryRequest(BaseModel):
-    user_id: str = Field(min_length=1)
-    history: list[dict[str, Any]]
-    question: str = Field(min_length=1)
+    user_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    history: list[WorkoutRecord]
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+    ]
 
 
 class AnalysisQueryResponse(BaseModel):
@@ -18,8 +23,13 @@ class AnalysisQueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=AnalysisQueryResponse)
-async def query_analysis(_: AnalysisQueryRequest) -> AnalysisQueryResponse:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Workout history analysis has not been implemented yet.",
+async def query_analysis(
+    request: AnalysisQueryRequest,
+    service: Annotated[AnalysisService, Depends(get_analysis_service)],
+) -> AnalysisQueryResponse:
+    result = await service.query(
+        user_id=request.user_id,
+        history=[workout.model_dump(mode="json") for workout in request.history],
+        question=request.question,
     )
+    return AnalysisQueryResponse(insight=result.insight, summary=result.summary)

@@ -26,7 +26,6 @@ services:
       RAG_EMBEDDING_BATCH_SIZE: ${RAG_EMBEDDING_BATCH_SIZE:-64}
       AGENT_MAX_ITERATIONS: ${AGENT_MAX_ITERATIONS:-5}
       KNOWLEDGE_BASE_DIR: /app/data/knowledge_base
-      SAMPLE_WORKOUTS_PATH: /app/data/workout-history.json
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:

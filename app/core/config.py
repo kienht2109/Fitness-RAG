@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     rag_embedding_batch_size: int = Field(default=64, ge=1, le=2048)
     agent_max_iterations: int = Field(default=5, ge=1, le=20)
     knowledge_base_dir: Path = Path("data/knowledge_base")
-    sample_workouts_path: Path = Path("data/workout-history.json")
 
 
 @lru_cache
