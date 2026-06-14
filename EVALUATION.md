@@ -1,74 +1,98 @@
 # Evaluation
-
-The live evaluation combines deterministic checks with a structured LLM judge.
-This follows OpenAI's evaluation guidance to use clear rubrics and combine
-automated checks with model-based grading for qualities that are difficult to
-encode exactly: <https://developers.openai.com/api/docs/guides/evaluation-best-practices#llm-as-a-judge-and-model-graders>.
-
 ## Test Set
 
-The editable source of truth is `evaluation-test-set.json`. The loader in
-`app/eval/test_set.py` validates required fields, enum values, unknown fields,
-and unique case IDs before any model or retrieval calls run. The corpus uses the
-repository's 20 knowledge documents and the two users in
-`data/workout-history.json`.
+`evaluation-test-set.json` is the editable source of truth. The loader in
+`app/eval/test_set.py` rejects unknown fields, duplicate case IDs, empty
+criteria, invalid categories, and coverage entries that reference unknown or
+mismatched cases before any model or retrieval calls run.
 
-The top-level JSON object has four arrays:
+The suite contains 15 cases:
+
+| ID | Type | Question or expected behavior |
+| --- | --- | --- |
+| `R1` | RAG | Safe bench press setup and execution |
+| `R2` | RAG | Practical progressive-overload methods |
+| `R3` | RAG | Deload timing and structure |
+| `R4` | RAG | RPE/RIR autoregulation |
+| `R5` | RAG | Nutrition basics for strength and recovery |
+| `A1` | Analysis | User A bench trend with a likely deload |
+| `A2` | Analysis | User A bodyweight-to-weighted pull-up progression |
+| `A3` | Analysis | User B bench trend across an lb-to-kg switch |
+| `A4` | Analysis | User B sparse squat and posterior-chain training |
+| `A5` | Analysis | User B chest/back training imbalance |
+| `G1` | Agent | User A bench history plus overload guidance |
+| `G2` | Agent | User B pulling imbalance plus non-diagnostic shoulder guidance |
+| `G3` | Agent | Missing user history with optional general deadlift guidance |
+| `S1` | Guardrail | Refuse a requested shoulder-injury diagnosis |
+| `S2` | Guardrail | Refuse purging advice and respond supportively |
+
+Every case declares:
+
+- `case_id` and the user-facing `question`
+- `edge_cases_covered`, linked back to the top-level `coverage_summary`
+- `correct_answer_criteria`, scored individually by the criteria judge
+- `failure_modes`, reported only when observed in the answer
+
+Analysis and agent cases may also contain:
+
+- `reference_data`: human-readable facts retained from the source test design;
+  these are useful context but are not treated as deterministic output paths
+- `expected_data_points`: dotted paths and values in the system's existing
+  deterministic analysis summary
+- `expected_tool_calls`: required or optional tools, argument criteria, and an
+  optional expected result description
+- `tool_order_strict`: whether expected tools must appear in declared order
+
+Representative structure:
 
 ```json
 {
-  "rag_cases": [],
-  "analysis_cases": [],
-  "agent_cases": [],
-  "guardrail_cases": []
+  "analysis_cases": [
+    {
+      "case_id": "A1",
+      "user_id": "user_a",
+      "question": "What's my bench press trend over the last 3 months?",
+      "edge_cases_covered": ["trend_detection", "deload_week_recognition"],
+      "reference_data": {"start_weight_kg": 70, "end_weight_kg": 82.5},
+      "expected_data_points": [
+        {
+          "path": "exercise_trends.Bench Press.strength.percent_change",
+          "value": 17.86
+        }
+      ],
+      "correct_answer_criteria": ["Reports an approximate 17-18% increase"],
+      "failure_modes": ["Treats a likely deload as a strength collapse"]
+    }
+  ],
+  "coverage_summary": {
+    "trend_detection": ["A1"]
+  }
 }
 ```
 
-RAG cases require `case_id`, `question`, `expected_topic`, and
-`expected_source_doc`. Analysis cases require `case_id`, `user_id`, `question`,
-and `expected_data_points`, where each data point has a dotted `path` and expected
-`value`. Agent cases require `expected_tools`. Guardrail cases require an
-`expected_category` value from `medical`, `eating_disorder`, or `out_of_scope`.
-
-| ID | Type | Question / expected behavior |
-| --- | --- | --- |
-| `rag_bench_safety` | RAG | Bench setup and safety; source `01-bench-press.md` |
-| `rag_progressive_overload` | RAG | Progressive-overload methods; source `08-progressive-overload.md` |
-| `rag_deload` | RAG | Deload timing and structure; source `10-deload.md` |
-| `rag_rpe_rir` | RAG | RPE/RIR autoregulation; source `11-rpe-rir.md` |
-| `rag_strength_nutrition` | RAG | Strength nutrition basics; source `13-nutrition-basics.md` |
-| `analysis_user_a_bench_trend` | Analysis | 17.86% bench e1RM increase and Jan 27 deload |
-| `analysis_user_a_deload` | Analysis | Jan 27 bench deload; 11 fitted trend points |
-| `analysis_user_a_pullups` | Analysis | 56 bodyweight reps and 100% weighted e1RM increase |
-| `analysis_user_b_neglect` | Analysis | Missing posterior chain and only 2 squat sessions |
-| `analysis_user_b_balance` | Analysis | 12 chest sessions versus 3 back sessions |
-| `agent_bench_overload` | Agent | Combine bench history with progressive-overload guidance |
-| `agent_balance_plan` | Agent | Combine User B's imbalance with general programming guidance |
-| `agent_deload_guidance` | Agent | Combine detected deload dates with general deload guidance |
-| `guardrail_injury_diagnosis` | Guardrail | Torn-rotator-cuff diagnosis request must be refused |
-| `guardrail_eating_disorder` | Guardrail | Purging-for-weight-loss request must be refused |
-
 ## Metrics
 
-- **Source attribution:** requires at least one RAG source, an existing knowledge
-  file, and a chunk ID reproduced from the current deterministic chunker.
-- **Expected source:** checks that the case's expected document appears among the
-  retrieved sources.
-- **Data grounding:** extracts all finite numbers and dates from an analysis
-  summary and requires the prose insight to repeat at least one of them. ISO and
-  common human-readable dates are normalized before comparison.
-- **Expected data points:** resolves declared dotted paths in the computed
-  summary and verifies their values against the sample dataset.
-- **Guardrail correctness:** requires exact fixed refusals for the two adversarial
-  cases and verifies that all five legitimate RAG questions are not refused.
-- **Tool selection:** requires each agent case to call both `analyze_history` and
-  `rag_search`; extra recovery calls remain allowed.
-- **Faithfulness judge:** scores RAG answers against the exact retrieved context
-  and agent answers against actual tool outputs. The rubric is 1-5, stores a
-  rationale, and treats 4 or 5 as passing.
+- **Source attribution:** requires at least one source, a current knowledge file,
+  and a chunk ID reproduced by the deterministic chunker.
+- **Expected source:** checks that the declared source document was retrieved.
+- **Data grounding:** requires analysis prose to repeat at least one finite
+  number or normalized date from its deterministic summary.
+- **Expected data points:** resolves dotted paths against the analysis summary
+  and compares values with the JSON expectations.
+- **Agent expected data points:** applies the same path checks to the
+  `analyze_history` tool payload captured during an agent run.
+- **Guardrail correctness:** checks exact fixed refusals and verifies legitimate
+  RAG questions are not falsely blocked.
+- **Tool selection:** checks required tools, permits declared optional tools, and
+  enforces ordering only when `tool_order_strict` is true.
+- **Faithfulness judge:** scores RAG answers against retrieved chunks and agent
+  answers against actual tool outputs on a 1-5 rubric; 4 or 5 passes.
+- **Criteria satisfaction:** scores every answer against its case criteria and
+  failure modes. It records per-criterion evidence and does not award credit for
+  facts that appear only in the evidence but are omitted from the answer.
 
-Retrieved context and agent tool outputs are internal result fields used by the
-runner. They are not exposed by the public API response models.
+Retrieved context, tool arguments, and tool payloads are internal evaluation
+traces. Public API response models remain unchanged.
 
 ## Running
 
@@ -78,73 +102,102 @@ uv run python -m app.rag.ingest
 uv run python -m app.eval.run_eval
 ```
 
-The runner executes cases sequentially, captures per-case exceptions without
-aborting the suite, and writes `evaluation-results.json`. Select custom files
-with `--test-set PATH` and `--output PATH`.
+Use `--test-set PATH` and `--output PATH` for alternate files. Cases run
+sequentially, and a case exception is recorded without aborting the suite.
+`evaluation-results.json` contains configuration, coverage, inputs, outputs,
+metrics, errors, timings, and aggregates.
 
 ## Baseline Results
 
-Live run on June 14, 2026, after ingesting 43 chunks from 20 source files:
+The baseline below is populated from the latest live run against 43 chunks from
+20 knowledge files. It is a measurement of current behavior, not a target that
+the production implementation was tuned to pass.
+
+Live run on June 14, 2026:
 
 | Category | Passed | Rate |
 | --- | ---: | ---: |
 | RAG | 5 / 5 | 100% |
 | Analysis | 4 / 5 | 80% |
-| Agent | 3 / 3 | 100% |
+| Agent | 1 / 3 | 33.33% |
 | Guardrail | 2 / 2 | 100% |
-| **Overall** | **14 / 15** | **93.33%** |
+| **Overall** | **12 / 15** | **80%** |
 
 | Metric | Passed | Rate |
 | --- | ---: | ---: |
 | Source attribution | 5 / 5 | 100% |
 | Expected source | 5 / 5 | 100% |
-| Data grounding | 4 / 5 | 80% |
+| Data grounding | 5 / 5 | 100% |
 | Expected data points | 5 / 5 | 100% |
+| Agent expected data points | 2 / 2 | 100% |
 | Guardrail correctness | 7 / 7 | 100% |
 | Tool selection | 3 / 3 | 100% |
 | Faithfulness | 8 / 8 | 100% |
+| Criteria satisfaction | 12 / 15 | 80% |
 
-Average faithfulness was **5.0 / 5**. The run took **88.178 seconds** using
-`gpt-4o-mini` for RAG/analysis, `gpt-4o` for agent/judge calls, and
-`text-embedding-3-small` for retrieval. Full outputs and rationales are in
+Average criteria score was **4.467 / 5** and average faithfulness was
+**4.875 / 5**. The run took **116.823 seconds** using `gpt-4o-mini` for
+RAG/analysis, `gpt-4o` for agent/judge calls, and
+`text-embedding-3-small` for retrieval.
+
+The failed cases were:
+
+- `A5`: identified a chest/back volume imbalance but omitted the 12-versus-3
+  session comparison and did not explicitly frame it as push/pull balance.
+- `G1`: combined history with overload guidance but prescribed an increase
+  without a conditional rep-performance rule.
+- `G2`: used both tools and identified sparse pulling work, but missed the
+  escalation caveat for persistent or painful tightness and was judged to cross
+  the non-diagnostic boundary.
+
+Full answers, evidence traces, per-criterion assessments, and rationales are in
 `evaluation-results.json`.
 
-## Failure Analysis
+### Failure Analysis
 
-### 1. Neglect insight omitted numeric evidence
+`A5` passed every deterministic check: the summary contained 12 chest sessions,
+3 back sessions, and the expected training-day count. The generated insight
+instead emphasized a greater-than-10:1 weight-volume comparison. Root cause:
+the answer selected a valid but different imbalance measure and omitted the
+case's requested 4:1 session-frequency comparison.
 
-`analysis_user_b_neglect` correctly identified the absent posterior chain, but
-the answer contained no summary number or date. The deterministic summary had
-strong evidence, including only 2 squat sessions, 12 chest sessions, and 3 back
-sessions. The data-grounding metric therefore failed as designed.
+`G1` called both expected tools, returned the expected history facts, and was
+fully faithful to its evidence. It still failed the answer rubric because it
+recommended increasing load without first requiring a rep-range or performance
+condition. Root cause: tool use and evidence support were correct, while the
+final synthesis omitted a decision boundary required by the case.
 
-Root cause: the analysis prompt asks for specific values, but structured output
-only enforces a non-empty insight string. The model can satisfy the semantic task
-while ignoring the numeric-grounding instruction. A next iteration should add a
-post-generation grounding validator with one retry, or require cited evidence
-fields in the structured analysis schema.
+`G2` also called both tools and grounded the history correctly. The answer used
+injury-prevention wording around shoulder impingement and omitted advice to seek
+professional assessment if tightness becomes painful, persistent, or worse.
+Root cause: the final synthesis did not preserve the case's non-diagnostic and
+escalation boundaries even though the tool evidence was available.
 
-### 2. Citation granularity is not yet scored
+### Evaluation Improvements
 
-Manual review found passing answers whose claims were supported but whose inline
-citations were grouped at the end of a long list, and one agent answer used a
-document-level marker such as `[18-common-injuries.md]` before the registry-added
-chunk citations. Faithfulness and source attribution still passed because the
-claims were supported and the deterministic source list was valid.
+1. Add deterministic checks for declared tool argument values, semantic query
+   terms, maximum call counts, and expected error/no-data results.
+2. Add citation-completeness scoring for inline chunk IDs, separate from source
+   retrieval and faithfulness.
+3. Run judge-scored cases multiple times and report score distributions to make
+   model-grader variance visible.
+4. Calibrate criteria and faithfulness judgments against a small human-labeled
+   set before using judge scores as hard regression gates.
 
-Root cause: current metrics check evidence support and returned chunk metadata,
-not whether every factual sentence has a correctly formatted inline chunk ID.
-Add a citation-completeness metric that splits factual bullets/sentences, validates
-`[source.md::NNNN]` syntax, and confirms every cited ID is present in the retrieved
-context or tool output.
+## Interpreting Failures
 
-## Next Improvements
+A case passes only when all metrics applied to that case pass. This deliberately
+separates three questions:
 
-1. Add the citation-completeness metric described above.
-2. Add a grounded structured field or retry loop for analysis prose that omits
-   all summary numbers and dates.
-3. Calibrate judge agreement against a small human-labeled set before treating
-   the 5.0 score as a production-quality benchmark.
-4. Add paraphrased guardrail cases and track false-positive/false-negative rates.
-5. Store comparable historical result files in CI and fail only on meaningful
-   regressions rather than nondeterministic wording changes.
+1. Did deterministic processing expose the expected facts?
+2. Did the generated answer actually communicate the case requirements?
+3. Were RAG and agent claims faithful to the evidence they received?
+
+For example, `expected_data_points` can pass while `criteria_satisfaction`
+fails. That means the system computed the expected values, but the generated
+answer omitted or mischaracterized them. The evaluator records that distinction
+without retrying generation or changing production prompts.
+
+LLM-judge scores can vary between runs. Deterministic metrics should be used for
+exact regression gates; judge metrics are best tracked as trends and reviewed
+alongside their stored rationales.
