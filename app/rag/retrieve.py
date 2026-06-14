@@ -65,12 +65,12 @@ class RetrievalService:
         if not documents:
             return RetrievalResult(answer=NO_CONTEXT_ANSWER, sources=[])
 
-        answer = await self.answer_chain.ainvoke(
-            {"question": question, "context": format_retrieval_context(documents)}
-        )
+        context = format_retrieval_context(documents)
+        answer = await self.answer_chain.ainvoke({"question": question, "context": context})
         return RetrievalResult(
             answer=answer.strip(),
             sources=sources_from_documents(documents),
+            context=context,
         )
 
 

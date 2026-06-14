@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Annotated
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
@@ -36,3 +36,4 @@ class ToolExecution:
 class AgentResult:
     answer: str
     tools_used: list[str]
+    tool_outputs: list[dict[str, Any]] = field(default_factory=list)

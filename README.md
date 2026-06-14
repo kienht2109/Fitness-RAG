@@ -4,8 +4,8 @@ An AI-assisted fitness service built around a grounded knowledge RAG pipeline,
 workout-history analysis, and a tool-calling coach agent. The API uses FastAPI,
 LangChain's OpenAI integrations, and a persistent Chroma vector database.
 
-> Status: Fitness RAG, workout-history analysis, and coach-assist orchestration are implemented.
-> The full evaluation pipeline is still to come.
+> Status: Fitness RAG, workout-history analysis, coach-assist orchestration, and the
+> live evaluation pipeline are implemented.
 
 ## Architecture
 
@@ -74,6 +74,28 @@ uvicorn app.api.main:app --reload
 
 For local execution outside Docker, set `CHROMA_HOST=localhost` and
 `CHROMA_PORT=8001` in `.env` while the Compose Chroma service is running.
+
+## Evaluation
+
+The evaluation suite contains 15 cases: 5 RAG questions, 5 workout-analysis
+questions, 3 multi-tool agent questions, and 2 adversarial guardrail questions.
+It combines deterministic source, data-grounding, guardrail, and tool-selection
+checks with a structured 1-5 faithfulness judge for RAG and agent answers.
+
+Run Chroma, ingest the knowledge base, and execute the suite:
+
+```bash
+docker compose up -d chroma
+uv run python -m app.rag.ingest
+uv run python -m app.eval.run_eval
+```
+
+Edit `evaluation-test-set.json` to change the cases without modifying Python.
+Use `--test-set PATH` to load another JSON file. The runner writes
+`evaluation-results.json` with every input, output, metric, error, duration, and
+aggregate score; use `--output PATH` to choose another location. See
+[EVALUATION.md](EVALUATION.md) for the JSON schema, metric definitions, current
+baseline, and failure analysis.
 
 ## API Skeleton
 
@@ -214,7 +236,6 @@ data/
 
 ## Documentation Roadmap
 
-- Expand this README with final API examples, tradeoffs, cost estimates, and the
-  production usage-metering design.
+- Expand this README with final tradeoffs, cost estimates, and the production
+  usage-metering design.
 - Add `AI_WORKFLOW.md` for prompting decisions and development reflections.
-- Expand `EVALUATION.md` as the complete evaluation runner and metrics are added.

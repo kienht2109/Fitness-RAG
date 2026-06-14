@@ -48,6 +48,7 @@ class RetrievalSource:
 class RetrievalResult:
     answer: str
     sources: list[RetrievalSource]
+    context: str = ""
 
 
 class GuardrailCategory(StrEnum):

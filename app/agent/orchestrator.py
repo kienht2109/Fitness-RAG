@@ -74,6 +74,7 @@ class AgentService:
                         observations,
                     ),
                     tools_used=tools_used,
+                    tool_outputs=_evaluation_tool_outputs(observations),
                 )
 
             executions = await asyncio.gather(
@@ -92,7 +93,11 @@ class AgentService:
                     tools_used.append(execution.name)
                 messages.append(_tool_message(tool_call["id"], execution))
 
-        return AgentResult(answer=MAX_ITERATIONS_ANSWER, tools_used=tools_used)
+        return AgentResult(
+            answer=MAX_ITERATIONS_ANSWER,
+            tools_used=tools_used,
+            tool_outputs=_evaluation_tool_outputs(observations),
+        )
 
 
 def _tool_message(tool_call_id: str, execution: ToolExecution) -> ToolMessage:
@@ -114,6 +119,17 @@ def _message_text(message: AIMessage) -> str:
         elif isinstance(block, dict) and isinstance(block.get("text"), str):
             parts.append(block["text"])
     return "\n".join(part.strip() for part in parts if part.strip())
+
+
+def _evaluation_tool_outputs(executions: list[ToolExecution]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": execution.name,
+            "is_error": execution.is_error,
+            "payload": execution.payload,
+        }
+        for execution in executions
+    ]
 
 
 def create_agent_service(settings: Settings | None = None) -> AgentService:
