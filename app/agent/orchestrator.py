@@ -125,6 +125,7 @@ def _evaluation_tool_outputs(executions: list[ToolExecution]) -> list[dict[str, 
     return [
         {
             "name": execution.name,
+            "arguments": execution.arguments,
             "is_error": execution.is_error,
             "payload": execution.payload,
         }

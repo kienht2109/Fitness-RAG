@@ -14,8 +14,11 @@ from app.agent.orchestrator import AgentService, create_agent_service
 from app.analysis.insight import AnalysisService, create_analysis_service
 from app.core.config import Settings, get_settings
 from app.eval.metrics import (
+    CriteriaJudge,
+    CriteriaJudgment,
     FaithfulnessJudge,
     MetricResult,
+    create_criteria_judge,
     create_faithfulness_judge,
     data_grounding,
     expected_data_points,
@@ -40,6 +43,7 @@ from app.rag.retrieve import RetrievalService, create_retrieval_service
 DEFAULT_OUTPUT_PATH = Path("evaluation-results.json")
 DEFAULT_TEST_SET_PATH = Path("evaluation-test-set.json")
 FAITHFULNESS_PASS_SCORE = 4
+CRITERIA_PASS_SCORE = 4
 
 
 class EvaluationRunner:
@@ -51,6 +55,7 @@ class EvaluationRunner:
         analysis_service: AnalysisService,
         agent_service: AgentService,
         judge: FaithfulnessJudge,
+        criteria_judge: CriteriaJudge,
         test_set: EvaluationTestSet,
         test_set_path: Path,
     ) -> None:
@@ -59,6 +64,7 @@ class EvaluationRunner:
         self.analysis_service = analysis_service
         self.agent_service = agent_service
         self.judge = judge
+        self.criteria_judge = criteria_judge
         self.test_set = test_set
         self.test_set_path = test_set_path
         self.known_chunk_ids = {
@@ -96,8 +102,10 @@ class EvaluationRunner:
                 "judge_model": self.settings.openai_judge_model,
                 "embedding_model": self.settings.openai_embedding_model,
                 "faithfulness_pass_score": FAITHFULNESS_PASS_SCORE,
+                "criteria_pass_score": CRITERIA_PASS_SCORE,
                 "test_set_path": str(self.test_set_path),
             },
+            "coverage_summary": self.test_set.coverage_summary,
             "aggregate": _aggregate(results),
             "cases": results,
         }
@@ -122,6 +130,15 @@ class EvaluationRunner:
             answer=result.answer,
             evidence=result.context,
         )
+        criteria = await self._evaluate_criteria(
+            case=case,
+            answer=result.answer,
+            evidence=result.context,
+            extra_expectations={
+                "expected_topic": case.expected_topic,
+                "expected_source_doc": case.expected_source_doc,
+            },
+        )
         return {
             "input": case.model_dump(mode="json"),
             "output": {
@@ -135,6 +152,7 @@ class EvaluationRunner:
                     "score": judgment.score,
                     "rationale": judgment.rationale,
                 },
+                "criteria_satisfaction": _criteria_metric(criteria),
             },
         }
 
@@ -145,19 +163,53 @@ class EvaluationRunner:
             "data_grounding": data_grounding(result.insight, result.summary),
             "expected_data_points": expected_data_points(result.summary, expected),
         }
+        criteria = await self._evaluate_criteria(
+            case=case,
+            answer=result.insight,
+            evidence=format_evidence(result.summary),
+        )
         return {
             "input": case.model_dump(mode="json"),
             "output": {"insight": result.insight, "summary": result.summary},
-            "metrics": _metric_dicts(metrics),
+            "metrics": {
+                **_metric_dicts(metrics),
+                "criteria_satisfaction": _criteria_metric(criteria),
+            },
         }
 
     async def _run_agent(self, case: AgentCase) -> dict[str, Any]:
         result = await self.agent_service.query(user_id=case.user_id, question=case.question)
-        metrics = {"tool_selection": tool_selection(result.tools_used, case.expected_tools)}
+        required_tools = [call.tool for call in case.expected_tool_calls if call.required]
+        optional_tools = [call.tool for call in case.expected_tool_calls if not call.required]
+        metrics = {
+            "tool_selection": tool_selection(
+                result.tools_used,
+                required_tools,
+                optional_tools=optional_tools,
+                strict_order=case.tool_order_strict,
+            )
+        }
+        if case.expected_data_points:
+            analysis_summary = _analysis_summary(result.tool_outputs)
+            expected = [(point.path, point.value) for point in case.expected_data_points]
+            metrics["agent_expected_data_points"] = expected_data_points(
+                analysis_summary, expected
+            )
         judgment = await self.judge.evaluate(
             question=case.question,
             answer=result.answer,
             evidence=format_evidence(result.tool_outputs),
+        )
+        criteria = await self._evaluate_criteria(
+            case=case,
+            answer=result.answer,
+            evidence=format_evidence(result.tool_outputs),
+            extra_expectations={
+                "expected_tool_calls": [
+                    call.model_dump(mode="json") for call in case.expected_tool_calls
+                ],
+                "tool_order_strict": case.tool_order_strict,
+            },
         )
         return {
             "input": case.model_dump(mode="json"),
@@ -173,6 +225,7 @@ class EvaluationRunner:
                     "score": judgment.score,
                     "rationale": judgment.rationale,
                 },
+                "criteria_satisfaction": _criteria_metric(criteria),
             },
         }
 
@@ -183,11 +236,40 @@ class EvaluationRunner:
             should_refuse=True,
             expected_category=case.expected_category,
         )
+        criteria = await self._evaluate_criteria(
+            case=case,
+            answer=result.answer,
+            evidence=format_evidence({"expected_category": case.expected_category.value}),
+        )
         return {
             "input": case.model_dump(mode="json"),
             "output": {"answer": result.answer, "sources": []},
-            "metrics": {"guardrail_correctness": metric.to_dict()},
+            "metrics": {
+                "guardrail_correctness": metric.to_dict(),
+                "criteria_satisfaction": _criteria_metric(criteria),
+            },
         }
+
+    async def _evaluate_criteria(
+        self,
+        *,
+        case: RagCase | AnalysisCase | AgentCase | GuardrailCase,
+        answer: str,
+        evidence: str,
+        extra_expectations: dict[str, Any] | None = None,
+    ) -> CriteriaJudgment:
+        expectations = {
+            "reference_data": case.reference_data,
+            "correct_answer_criteria": list(case.correct_answer_criteria),
+            "failure_modes": list(case.failure_modes),
+            **(extra_expectations or {}),
+        }
+        return await self.criteria_judge.evaluate(
+            question=case.question,
+            answer=answer,
+            evidence=evidence,
+            expectations=expectations,
+        )
 
     async def _capture(
         self,
@@ -230,6 +312,7 @@ def create_runner(
         analysis_service=create_analysis_service(settings),
         agent_service=create_agent_service(settings),
         judge=create_faithfulness_judge(settings),
+        criteria_judge=create_criteria_judge(settings),
         test_set=test_set,
         test_set_path=test_set_path,
     )
@@ -239,10 +322,35 @@ def _metric_dicts(metrics: dict[str, MetricResult]) -> dict[str, dict[str, Any]]
     return {name: result.to_dict() for name, result in metrics.items()}
 
 
+def _criteria_metric(judgment: CriteriaJudgment) -> dict[str, Any]:
+    return {
+        "passed": judgment.score >= CRITERIA_PASS_SCORE,
+        "score": judgment.score,
+        "rationale": judgment.rationale,
+        "met_criteria": judgment.met_criteria,
+        "missed_criteria": judgment.missed_criteria,
+        "observed_failure_modes": judgment.observed_failure_modes,
+        "criterion_assessments": [
+            assessment.model_dump(mode="json")
+            for assessment in judgment.criterion_assessments
+        ],
+    }
+
+
+def _analysis_summary(tool_outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    for output in tool_outputs:
+        if output.get("name") == "analyze_history" and not output.get("is_error"):
+            summary = output.get("payload", {}).get("summary")
+            if isinstance(summary, dict):
+                return summary
+    return {}
+
+
 def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     metric_totals: dict[str, dict[str, float]] = {}
     category_totals: dict[str, dict[str, int]] = {}
     faithfulness_scores: list[int] = []
+    criteria_scores: list[int] = []
     for result in results:
         category = result["category"]
         category_stats = category_totals.setdefault(category, {"total": 0, "passed": 0})
@@ -254,6 +362,8 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
             stats["passed"] += int(metric.get("passed") is True)
             if name == "faithfulness" and isinstance(metric.get("score"), int):
                 faithfulness_scores.append(metric["score"])
+            if name == "criteria_satisfaction" and isinstance(metric.get("score"), int):
+                criteria_scores.append(metric["score"])
 
     for stats in metric_totals.values():
         stats["pass_rate"] = round(stats["passed"] / stats["total"], 4)
@@ -270,6 +380,11 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
         "average_faithfulness_score": (
             round(sum(faithfulness_scores) / len(faithfulness_scores), 3)
             if faithfulness_scores
+            else None
+        ),
+        "average_criteria_score": (
+            round(sum(criteria_scores) / len(criteria_scores), 3)
+            if criteria_scores
             else None
         ),
         "by_category": category_totals,

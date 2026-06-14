@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from app.rag.models import GuardrailCategory
 
@@ -18,6 +18,10 @@ class EvaluationCase(BaseModel):
 
     case_id: NonEmptyText
     question: NonEmptyText
+    edge_cases_covered: tuple[NonEmptyText, ...] = Field(min_length=1)
+    reference_data: dict[str, Any] = Field(default_factory=dict)
+    correct_answer_criteria: tuple[NonEmptyText, ...] = Field(min_length=1)
+    failure_modes: tuple[NonEmptyText, ...] = Field(min_length=1)
 
 
 class ExpectedDataPoint(BaseModel):
@@ -25,6 +29,16 @@ class ExpectedDataPoint(BaseModel):
 
     path: NonEmptyText
     value: Any
+    description: NonEmptyText | None = None
+
+
+class ExpectedToolCall(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tool: NonEmptyText
+    required: bool = True
+    argument_criteria: tuple[NonEmptyText, ...] = ()
+    expected_result: NonEmptyText | None = None
 
 
 class RagCase(EvaluationCase):
@@ -39,7 +53,9 @@ class AnalysisCase(EvaluationCase):
 
 class AgentCase(EvaluationCase):
     user_id: NonEmptyText
-    expected_tools: tuple[NonEmptyText, ...]
+    expected_tool_calls: tuple[ExpectedToolCall, ...] = Field(min_length=1)
+    tool_order_strict: bool = False
+    expected_data_points: tuple[ExpectedDataPoint, ...] = ()
 
 
 class GuardrailCase(EvaluationCase):
@@ -60,6 +76,7 @@ class EvaluationTestSet(BaseModel):
     analysis_cases: tuple[AnalysisCase, ...]
     agent_cases: tuple[AgentCase, ...]
     guardrail_cases: tuple[GuardrailCase, ...]
+    coverage_summary: dict[NonEmptyText, tuple[NonEmptyText, ...]]
 
     @property
     def all_cases(self) -> tuple[EvaluationCase, ...]:
@@ -83,6 +100,27 @@ class EvaluationTestSet(BaseModel):
                 "Evaluation case IDs must be unique; duplicates: "
                 + ", ".join(duplicate_ids)
             )
+        known_case_ids = set(case_ids)
+        for coverage_name, covered_case_ids in self.coverage_summary.items():
+            if not covered_case_ids:
+                raise ValueError(f"Coverage entry must reference at least one case: {coverage_name}")
+            unknown_case_ids = sorted(set(covered_case_ids) - known_case_ids)
+            if unknown_case_ids:
+                raise ValueError(
+                    f"Coverage entry {coverage_name!r} references unknown cases: "
+                    + ", ".join(unknown_case_ids)
+                )
+        for case in self.all_cases:
+            missing_coverage = [
+                edge_case
+                for edge_case in case.edge_cases_covered
+                if case.case_id not in self.coverage_summary.get(edge_case, ())
+            ]
+            if missing_coverage:
+                raise ValueError(
+                    f"Case {case.case_id!r} is missing from coverage_summary entries: "
+                    + ", ".join(missing_coverage)
+                )
         return self
 
 

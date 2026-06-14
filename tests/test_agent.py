@@ -150,6 +150,10 @@ def test_agent_executes_both_tools_and_returns_one_final_answer() -> None:
     assert "[08-progressive-overload.md::0000]" in result.answer
     assert retrieval.queries == ["progressive overload guidance for bench press"]
     assert analysis.queries == [("user_a", "How is my bench progressing?")]
+    assert result.tool_outputs[0]["arguments"] == {
+        "user_id": "user_a",
+        "question": "How is my bench progressing?",
+    }
     tool_messages = [message for message in model.calls[1] if isinstance(message, ToolMessage)]
     assert len(tool_messages) == 2
     assert "08-progressive-overload.md::0000" in tool_messages[1].content

@@ -30,6 +30,7 @@ class ToolExecution:
     content: str
     payload: dict[str, Any]
     is_error: bool = False
+    arguments: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

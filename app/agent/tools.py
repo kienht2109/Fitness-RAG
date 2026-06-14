@@ -99,15 +99,19 @@ class CoachToolRegistry:
                 return await self._rag_search(arguments)
             if name == ANALYZE_HISTORY:
                 return await self._analyze_history(arguments, request_user_id)
-            return self._error(name, f"Unknown tool: {name}")
+            return self._error(name, f"Unknown tool: {name}", arguments)
         except ValidationError as exc:
             details = "; ".join(
                 f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
                 for error in exc.errors()
             )
-            return self._error(name, f"Invalid tool arguments: {details}")
+            return self._error(name, f"Invalid tool arguments: {details}", arguments)
         except Exception:
-            return self._error(name, "Tool execution failed and is temporarily unavailable.")
+            return self._error(
+                name,
+                "Tool execution failed and is temporarily unavailable.",
+                arguments,
+            )
 
     def finalize_answer(self, answer: str, executions: list[ToolExecution]) -> str:
         """Apply source attribution owned by the registered tool definitions."""
@@ -135,7 +139,7 @@ class CoachToolRegistry:
     async def _rag_search(self, arguments: dict[str, Any]) -> ToolExecution:
         validated = RagSearchArguments.model_validate(arguments)
         payload = await rag_search(validated.query, service=self.retrieval_service)
-        return self._success(RAG_SEARCH, payload)
+        return self._success(RAG_SEARCH, payload, validated.model_dump())
 
     async def _analyze_history(
         self,
@@ -147,25 +151,40 @@ class CoachToolRegistry:
             return self._error(
                 ANALYZE_HISTORY,
                 "The tool user_id does not match the authoritative request user_id.",
+                validated.model_dump(),
             )
         payload = await analyze_history(
             request_user_id,
             validated.question,
             service=self.analysis_service,
         )
-        return self._success(ANALYZE_HISTORY, payload)
+        return self._success(ANALYZE_HISTORY, payload, validated.model_dump())
 
     @staticmethod
-    def _success(name: str, payload: dict[str, Any]) -> ToolExecution:
+    def _success(
+        name: str,
+        payload: dict[str, Any],
+        arguments: dict[str, Any],
+    ) -> ToolExecution:
         content = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-        return ToolExecution(name=name, content=content, payload=payload)
+        return ToolExecution(
+            name=name,
+            content=content,
+            payload=payload,
+            arguments=arguments,
+        )
 
     @staticmethod
-    def _error(name: str, message: str) -> ToolExecution:
+    def _error(
+        name: str,
+        message: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> ToolExecution:
         payload = {"error": message}
         return ToolExecution(
             name=name,
             content=json.dumps(payload, sort_keys=True, separators=(",", ":")),
             payload=payload,
             is_error=True,
+            arguments=arguments or {},
         )
